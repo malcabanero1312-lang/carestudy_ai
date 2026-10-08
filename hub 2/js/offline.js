@@ -1,0 +1,28 @@
+// OFFLINE TUTOR — no internet, no API. It searches your Book (js/book.js) with synonyms + typo tolerance.
+// Honest limit: it only knows your notebook. For outside questions, connect an online AI in Settings.
+import{book}from'./book.js';import{topics}from'./data/topics.js';import{qa}from'./data/qa.js';import{grade}from'./voice.js';import{db}from'./storage.js';
+const STOP=new Set('what is the a an of for to in on how do i does why when which are about tell me please my you your can should and or with it this that be was were give explain'.split(' '));
+const SYN={bp:'blood pressure',temp:'temperature',hr:'pulse',heartrate:'pulse',heart:'pulse',breath:'respiratory',breathing:'respiratory',wash:'handwashing',hands:'handwashing',hand:'handwashing',shave:'shaving',razor:'shaving',baby:'infant',sterilise:'sterilization',sterilize:'sterilization',sterilizing:'sterilization',burp:'burping',choke:'choking',choked:'choking',fever:'temperature',wheelchair:'transfer',cuts:'wound',wounds:'wound',bandage:'wound',resuscitation:'cpr',cardiac:'cpr',pee:'urine',poop:'stool',diaper:'stool'};
+const stem=w=>w.length>4?w.replace(/(ing|ed|es|s)$/,''):w;
+const tok=s=>{const o=[];for(const w of(s.toLowerCase().match(/[a-z0-9]+/g)||[])){if(STOP.has(w))continue;o.push(stem(w));const k=SYN[w]?w:(w.length>5?Object.keys(SYN).find(y=>y.length>4&&lev1(y,w)):null);if(k)SYN[k].split(' ').forEach(x=>o.push(stem(x)))}return o};
+const lev1=(a,b)=>{if(Math.abs(a.length-b.length)>1)return false;let i=0,j=0,e=0;while(i<a.length&&j<b.length){if(a[i]==b[j]){i++;j++;continue}if(++e>1)return false;if(a.length>b.length)i++;else if(a.length<b.length)j++;else{i++;j++}}return e+(a.length-i)+(b.length-j)<=1};
+let IX=null;const index=()=>IX||(IX=(()=>{const df={};const rows=book.map(e=>{const q=new Set(tok(e.q.join(' '))),a=new Set(tok(e.a));q.forEach(w=>df[w]=(df[w]||0)+1);return{e,q,a,qs:e.q.map(x=>x.toLowerCase())}});const N=rows.length;return{rows,idf:w=>Math.log(1+N/(1+(df[w]||0))),vocab:Object.keys(df)}})());
+const topicOf=q=>{const s=q.toLowerCase();return topics.find(t=>s.includes(t.title.toLowerCase())||(t.id=='cpr'&&/\bcpr\b/.test(s))||(t.id=='hand'&&/hand ?wash/.test(s))||(t.id=='vitals'&&/vital sign/.test(s))||(t.id=='bottles'&&/bottle|burp|formula/.test(s))||(t.id=='bath'&&/bed ?bath/.test(s))||(t.id=='pos'&&/position/.test(s))||(t.id=='shave'&&/shav/.test(s)))};
+export function search(query,tid,n=3){const X=index(),qt=[...new Set(tok(query))];if(!qt.length)return[];const total=qt.reduce((a,w)=>a+X.idf(w),0),nq=query.toLowerCase().replace(/[^a-z0-9 ]/g,' ').replace(/\s+/g,' ').trim();
+ const res=X.rows.map(r=>{let m=0,sc=0;for(const w of qt){const i=X.idf(w);if(r.q.has(w)){m+=i;sc+=3*i}else if(r.a.has(w)){m+=i*.5;sc+=i}else if(w.length>4&&X.vocab.some(v=>r.q.has(v)&&lev1(v,w))){m+=i*.8;sc+=2.2*i}}
+  if(r.qs.some(s=>s==nq))sc+=8;else if(r.qs.some(s=>s.includes(nq)||nq.includes(s)))sc+=3;if(tid&&r.e.t==tid)sc*=1.25;if(r.e.micro)sc*=.9;return{e:r.e,sc,cov:m/total}}).filter(x=>x.sc>0).sort((a,b)=>b.sc-a.sc);
+ return res.slice(0,n)}
+let pend=null;
+const pick=a=>a[Math.floor(Math.random()*a.length)];
+export function answer(text,tid){const s=text.trim(),l=s.toLowerCase(),T=topics.find(t=>t.id==tid),out=(t,rel=[])=>({text:t,rel});
+ if(pend&&!/^(skip|stop|cancel|next|no)$/.test(l)){const p=pend;pend=null;const g=grade(s,p.a);return out(`Score: ${g.pct}%\n✅ You covered: ${g.hit.join(', ')||'—'}\n❌ Missed: ${g.miss.join(', ')||'—'}\n\n📖 Expected: ${p.a}`,['Quiz me again'])}
+ pend=null;
+ if(/^(hi|hello|hey|good (morning|afternoon|evening))\b/.test(l))return out(`Hi ${db.settings.name.split(' ')[0]}! I'm your offline tutor. Ask me anything from your notebook — try “normal blood pressure”, “steps of handwashing” or “quiz me”.`,['Quiz me','Memory trick','What should I study next?']);
+ if(/^(thanks|thank you|ty)\b/.test(l))return out('You\'re welcome! Keep going — you\'re doing great. 💪');
+ if(/study next|what should i (study|review)|my weak|weakest/.test(l)){const w=[...topics].sort((a,b)=>(db.t[a.id]?.prac??0)-(db.t[b.id]?.prac??0))[0];return out(`I suggest reviewing “${w.title}” next, then trying the Oral Q&A “Weak areas” mode.`,[`Summary of ${w.title}`])}
+ const mt=topicOf(s)||T;
+ if(/quiz|test me|ask me a question|question me/.test(l)){const pool=(mt?book.filter(e=>e.t==mt.id&&!e.micro&&!e.mem&&e.a.length<260):[]).concat(qa.map(x=>({q:[x.q],a:x.a})));const e=pick(pool);pend=e;return out(`🧪 Question: ${e.q[0].replace(/^./,c=>c.toUpperCase())}${e.q[0].endsWith('?')?'':'?'}\n\n(Type your answer — or “skip”)`)}
+ if(/memory|mnemonic|remember|trick/.test(l)){if(!mt)return out('Which chapter? Open a chapter first or say e.g. “memory trick for CPR”.',topics.slice(0,4).map(t=>`Memory trick ${t.title}`));const m=mt.blocks.find(b=>b.k=='mem');return out(m?`🧠 ${mt.title}: ${m.t}`:'No memory trick in your notes for this chapter.')}
+ if(/summar|overview|explain .*simpl|simple|in short|recap/.test(l)&&mt){const d=mt.blocks.find(b=>b.k=='def');return out(`📖 ${mt.title}\n${d?d.t+'\n\n':''}Main parts: ${mt.blocks.filter(b=>b.h).map(b=>b.h).join(' · ')}`,mt.blocks.filter(b=>b.h).slice(0,3).map(b=>b.h+' '+mt.title))}
+ const r=search(s,tid);if(!r.length||r[0].cov<.45){const sug=search(s,tid,3).map(x=>x.e.title||x.e.q[0]);return out(`I couldn't find that in your notebook, so I won't guess. 🙏 ${sug.length?'Maybe you meant:':''}\n(For questions outside your notes, connect an online AI in Settings → AI.)`,sug)}
+ const top=r[0].e,t=topics.find(x=>x.id==top.t);return out(`${top.a}\n\n— ${t?`Chapter ${t.no}: ${t.title}`:'Comprehensive Q&A'}`,r.slice(1,3).map(x=>x.e.title||x.e.q[0]))}
